@@ -1,0 +1,28 @@
+# Virtual environments
+.extra_time_env/
+.env
+venv/
+
+# Config and data files
+*.log
+*.csv
+*.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# RAP PDFs and folders
+RAP/
+**/RAP/
+*.pdf
+
+# System files
+.DS_Store
+Thumbs.db
