@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RAPydity Instructions</title>
+    <link rel="icon" type="image/gif" href="R_logo3.gif">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        .note {
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div style="text-align: center; margin-bottom: 20px;">
+        <img src="R_logo3.gif" alt="RAPydity Logo" style="max-width: 150px;">
+        <h1>RAPydity v0.9.0 - RAP Processing Tool</h1>
+    </div>
+    
+    <p>RAPydity is a tool for processing Reasonable Adjustment Plans (RAPs) directly from the PDF files and applying extra time accommodations to Canvas assignments.</p>
+
+    <h2>Installation</h2>
+    <ol>
+        <li>
+            <strong>Python Installation</strong>
+            <ul>
+                <li>Make sure Python 3.8 or later is installed on your computer</li>
+                <li>You can download Python from the Software Centre, the Microsoft Store, or directly from <a href="https://www.python.org/downloads/" target="_blank">python.org</a></li>
+                <li>During installation, make sure to check "Add Python to PATH"</li>
+            </ul>
+        </li>
+        
+        <li>
+            <strong>Download and Setup</strong>
+            <ul>
+                <li>Download RAPydity from the <a href="https://github.com/florianbreuer/rapydity/releases" target="_blank">releases page</a></li>
+                <li>Extract the files to a folder of your choice</li>
+                <li>Open a terminal/command prompt and navigate to the RAPydity folder</li>
+                <li>Create and activate a virtual environment (recommended):
+                    <ul>
+                        <li>Windows: 
+                            <code>python -m venv venv</code> then 
+                            <code>venv\Scripts\activate</code>
+                        </li>
+                        <li>Mac/Linux: 
+                            <code>python3 -m venv venv</code> then 
+                            <code>source venv/bin/activate</code>
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+
+        <li>
+            <strong>Install Required Libraries</strong>
+            <ul>
+                <li>With your virtual environment activated, run:</li>
+                <li>Run: <code>pip install PyPDF2 requests tk</code></li>
+            </ul>
+            <div class="note">
+                <strong>Note:</strong> On most systems, tkinter comes pre-installed with Python.
+                If you're using a virtual environment and tkinter is not found, you'll need to install it system-wide:
+                <ul>
+                    <li>On Ubuntu/Debian: <code>sudo apt-get install python3-tk</code></li>
+                    <li>On Fedora: <code>sudo dnf install python3-tkinter</code></li>
+                    <li>On Windows: Reinstall Python and make sure to select "tcl/tk and IDLE" during installation</li>
+                </ul>
+            </div>
+        </li>
+
+        <li>
+            <strong>Run RAPydity</strong>
+            <ul>
+                <li>With your virtual environment activated, run:
+                    <ul>
+                        <li>Windows: <code>python rapydity.py</code></li>
+                        <li>Mac/Linux: <code>python3 rapydity.py</code></li>
+                    </ul>
+                </li>
+                <li>Note: Double-clicking <code>rapydity.py</code> won't work when using a virtual environment, as it would use the system Python instead</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>Initial Setup</h2>
+    <ol>
+        <li>On first run, you'll need to:
+            <ul>
+                <li><strong>Select a Shared RAP Folder</strong>
+                    <ul>
+                        <li>This is where RAP PDFs accessible to all courses will be stored</li>
+                        <li>The default location is <code>RAP/</code> in your home directory</li>
+                        <li>You can change this location during setup or later via the course manager</li>
+                    </ul>
+                </li>
+                <li><strong>Enter your Canvas API access token</strong>
+                    <ul>
+                        <li>Go to Canvas → Account → Settings</li>
+                        <li>Scroll down to "Approved Integrations"</li>
+                        <li>Click "+ New Access Token"</li>
+                        <li>Give it a purpose (e.g., "RAPydity")</li>
+                        <li>Set an expiry date if desired (optional)</li>
+                        <li>Click "Generate Token" and copy the token</li>
+                        <li>Paste the token into RAPydity when prompted</li>
+                        <li><strong>Important:</strong> Save this token somewhere safe as Canvas won't show it again</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>The configuration will be saved in <code>config.ini</code></li>
+    </ol>
+
+    <h2>Course Management</h2>
+    <ol>
+        <li>Select a course from the dropdown menu at the top of the window
+            <ul>
+                <li>By default, only current courses are shown</li>
+                <li>Uncheck "Show current courses only" to see past courses</li>
+            </ul>
+        </li>
+        <li>Click "Manage Courses" to:
+            <ul>
+                <li>Refresh the course list from Canvas</li>
+                <li>Configure course-specific RAP folders</li>
+                <li>View all available courses</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>Viewing Extra Time Data</h2>
+    <ol>
+        <li>Click "View Extra Time Data" to see all processed RAP information for the current course</li>
+        <li>The viewer shows:
+            <ul>
+                <li>Student names and numbers</li>
+                <li>Extra time allocations</li>
+            </ul>
+        </li>
+        <li>Click any column header to sort the data</li>
+        <li>This view is read-only - to update data, use "Update from RAP PDFs"</li>
+    </ol>
+
+    <h2>RAP Processing</h2>
+    <ol>
+        <li>Place RAP PDFs in either:
+            <ul>
+                <li>The shared RAP folder (default: <code>RAP/</code>)</li>
+                <li>A course-specific folder (if configured)</li>
+            </ul>
+        </li>
+        <li>Click "Update from RAP PDFs" to:
+            <ul>
+                <li>Extract student information from RAPs</li>
+                <li>Look up Canvas IDs for new students</li>
+                <li>Save the information to a course-specific CSV file</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>Application Features</h2>
+    <ul>
+        <li><strong>Course Selection:</strong>
+            <ul>
+                <li>"Show current courses only" checkbox filters out past courses</li>
+                <li>Course list is automatically sorted alphabetically</li>
+            </ul>
+        </li>
+        <li><strong>Logging:</strong>
+            <ul>
+                <li>The log window shows important messages and actions</li>
+                <li>Use the "Clear Log" button to reset the log display</li>
+                <li>All actions are still recorded in <code>rapydity.log</code> even after clearing</li>
+            </ul>
+        </li>
+        <li><strong>Data Management:</strong>
+            <ul>
+                <li>Course-specific RAP folders can be configured via "Manage Courses"</li>
+                <li>Student data is stored in course-specific CSV files</li>
+                <li>Changes are logged for accountability</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2>Troubleshooting</h2>
+    <ul>
+        <li><strong>Common Issues:</strong>
+            <ul>
+                <li>If a student's RAP isn't being processed:
+                    <ul>
+                        <li>Check that the PDF is readable and contains the required information</li>
+                        <li>Verify the format matches: name in Title Case, surname in UPPERCASE, followed by 7-digit student number</li>
+                        <li>Ensure the extra time specification is in the format "Extra time XX mins per hour"</li>
+                    </ul>
+                </li>
+                <li>If Canvas integration isn't working:
+                    <ul>
+                        <li>Verify your API token hasn't expired</li>
+                        <li>Check that students are enrolled in the correct course</li>
+                        <li>Ensure you have appropriate permissions in Canvas</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li><strong>Logging and Debugging:</strong>
+            <ul>
+                <li>Check the log window for immediate feedback</li>
+                <li>More detailed logs are in <code>rapydity.log</code></li>
+                <li>Use "View Extra Time Data" to verify processed information</li>
+            </ul>
+        </li>
+        <li><strong>File Access:</strong>
+            <ul>
+                <li>Ensure you have write permissions for the RAP folders</li>
+                <li>Check that CSV files aren't open in other programs when updating</li>
+                <li>Verify file paths don't contain special characters</li>
+            </ul>
+        </li>
+    </ul>
+
+    <hr style="margin-top: 40px;">
+    <div style="font-size: 0.8em; color: #666; text-align: center; padding: 20px;">
+        © 2024 <a href="https://github.com/florianbreuer" target="_blank">Florian Breuer</a>. RAPydity is free software released under the <a href="https://opensource.org/licenses/MIT" target="_blank">MIT License</a>.
+    </div>
+</body>
+</html> 
