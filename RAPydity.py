@@ -273,14 +273,22 @@ class RAPReader:
                     return student
                 else:
                     self.logger.warning("Could not find all required information:")
-                    self.logger.warning(f"Name match: {name_match}")
-                    self.logger.warning(f"Extra time match: {extra_time_match}")
                     
+                    if not name_match:
+                        self.logger.warning(f"Student name/number not found in {pdf_path.name}")
+                    
+                    if not extra_time_match:
+                        self.logger.warning(
+                            f"No extra time information found in {pdf_path.name}. "
+                            f"Please check this PDF manually to verify if extra time accommodation is specified."
+                        )
+                    
+                    self.logger.debug(f"Name match: {name_match}")
+                    self.logger.debug(f"Extra time match: {extra_time_match}")
 
         except Exception as e:
             self.logger.error(f"Error processing {pdf_path}: {e}")
         
-
         return None
 
     def _read_existing_csv(self, csv_path: Path) -> Dict[str, Student]:
@@ -320,42 +328,81 @@ class RAPReader:
         course = self.current_course
         self.logger.info("Starting RAP processing...")
         
-        students_by_number = self._read_existing_csv(course.csv_file)
+        # Initialize counters for warnings and errors
+        warning_count = 0
+        error_count = 0
         
-        # Process each PDF in RAP folder
-        pdf_count = 0
-        new_count = 0
+        # Create a custom handler to count warnings and errors
+        class CountingHandler(logging.Handler):
+            def emit(self, record):
+                nonlocal warning_count, error_count
+                if record.levelno == logging.WARNING:
+                    warning_count += 1
+                elif record.levelno >= logging.ERROR:
+                    error_count += 1
         
-        # Get PDFs from both shared and course-specific folders
-        pdf_files = self.course_manager.get_rap_files(course.course_id)
-        for pdf_path in pdf_files:
-            pdf_count += 1
-            student = self.extract_student_info_from_pdf(pdf_path)
-            if student:
-                if student.student_number not in students_by_number:
-                    # Look up Canvas ID for new student
-                    canvas_id = self.canvas_api.find_student_canvas_id(course.course_id, student.student_number)
-                    if canvas_id:
-                        student.canvas_id = canvas_id
-                        students_by_number[student.student_number] = student
-                        new_count += 1
-                        msg = f"Added new student: {student.name} {student.surname}"
-                        self.logger.info(msg)
+        # Add the counting handler temporarily
+        counting_handler = CountingHandler()
+        self.logger.addHandler(counting_handler)
+        
+        try:
+            students_by_number = self._read_existing_csv(course.csv_file)
+            
+            # Process each PDF in RAP folder
+            pdf_count = 0
+            new_count = 0
+            
+            # Get PDFs from both shared and course-specific folders
+            pdf_files = self.course_manager.get_rap_files(course.course_id)
+            for pdf_path in pdf_files:
+                pdf_count += 1
+                student = self.extract_student_info_from_pdf(pdf_path)
+                if student:
+                    if student.student_number not in students_by_number:
+                        # Look up Canvas ID for new student
+                        canvas_id = self.canvas_api.find_student_canvas_id(course.course_id, student.student_number)
+                        if canvas_id:
+                            student.canvas_id = canvas_id
+                            students_by_number[student.student_number] = student
+                            new_count += 1
+                            msg = f"Added new student: {student.name} {student.surname}"
+                            self.logger.info(msg)
+                        else:
+                            msg = f"Could not find Canvas ID for student: {student.name} {student.surname} (probably not enrolled in this course)"
+                            self.logger.warning(msg)
                     else:
-                        msg = f"Could not find Canvas ID for student: {student.name} {student.surname} (probably not enrolled in this course)"
-                        self.logger.warning(msg)
+                        msg = f"Student already exists: {student.name} {student.surname}"
+                        self.logger.info(msg)
+            
+            # Write updated CSV
+            self._write_csv(list(students_by_number.values()), course.csv_file)
+            
+            summary = f"\nProcessed {pdf_count} PDFs"
+            self.logger.info(summary)
+            
+            summary = f"Added {new_count} new students"
+            self.logger.info(summary)
+            
+            # Show alert if there were warnings or errors
+            if warning_count > 0 or error_count > 0:
+                import tkinter.messagebox as messagebox
+                
+                message = "Issues occurred during RAP processing:\n\n"
+                if warning_count > 0:
+                    message += f"• {warning_count} warning{'s' if warning_count > 1 else ''}\n"
+                if error_count > 0:
+                    message += f"• {error_count} error{'s' if error_count > 1 else ''}\n"
+                
+                message += "\nPlease review the log for details."
+                
+                if error_count > 0:
+                    messagebox.showerror("Processing Errors", message)
                 else:
-                    msg = f"Student already exists: {student.name} {student.surname}"
-                    self.logger.info(msg)
+                    messagebox.showwarning("Processing Warnings", message)
         
-        # Write updated CSV
-        self._write_csv(list(students_by_number.values()), course.csv_file)
-        
-        summary = f"\nProcessed {pdf_count} PDFs"
-        self.logger.info(summary)
-        
-        summary = f"Added {new_count} new students"
-        self.logger.info(summary)
+        finally:
+            # Remove the counting handler
+            self.logger.removeHandler(counting_handler)
 
 class CanvasAPI:
     def __init__(self, 
@@ -1460,17 +1507,40 @@ class RAPReaderGUI:
         self.root.mainloop()
 
 class TextHandler(logging.Handler):
-    """Handler for redirecting logging to tkinter text widget"""
+    """Handler for redirecting logging to tkinter text widget with colored messages"""
     def __init__(self, text_widget):
         super().__init__()
         self.setLevel(logging.INFO)  # Changed from WARNING to INFO
         self.text_widget = text_widget
         
+        # Configure tags for different log levels
+        self.text_widget.tag_configure('INFO', foreground='black')
+        self.text_widget.tag_configure('DEBUG', foreground='gray')
+        self.text_widget.tag_configure('WARNING', background='#FFCC00', foreground='black')  # Yellow background
+        self.text_widget.tag_configure('ERROR', background='#FF3333', foreground='white')    # Red background
+        self.text_widget.tag_configure('CRITICAL', background='#CC0000', foreground='white') # Darker red for critical
+        
+        # Map log levels to tag names
+        self.level_tags = {
+            logging.DEBUG: 'DEBUG',
+            logging.INFO: 'INFO',
+            logging.WARNING: 'WARNING',
+            logging.ERROR: 'ERROR',
+            logging.CRITICAL: 'CRITICAL'
+        }
+        
     def emit(self, record):
         msg = self.format(record)
+        
         def append():
-            self.text_widget.insert(tk.END, msg + '\n')
+            # Get the appropriate tag for this log level
+            tag = self.level_tags.get(record.levelno, 'INFO')
+            
+            # Insert the message with the tag
+            self.text_widget.insert(tk.END, msg + '\n', tag)
             self.text_widget.see(tk.END)
+            
+        # Schedule the update on the main thread
         self.text_widget.after(0, append)
 
 def main():
