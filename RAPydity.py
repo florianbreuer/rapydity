@@ -256,7 +256,7 @@ class RAPReader:
                 self.logger.debug(f"Extracted text: {text[:200]}...") # Log first 200 chars for debugging
                 
                 # Extract name and surname - get first match of name followed by uppercase surname and exactly 7 digits
-                name_matches = list(re.finditer(r'(\w+)\s*([A-Z]{2,}?)\s*(\d{7})', text))
+                name_matches = list(re.finditer(r'(\w+)\s*([A-Z][-A-Z]{1,}?)\s*(\d{7})', text))
                 name_match = name_matches[0] if name_matches else None
                 
                 # Extract extra time - format is "Extra time 30 mins per hour"
@@ -265,7 +265,7 @@ class RAPReader:
                 if name_match and extra_time_match:
                     student = Student(
                         name=name_match.group(1),          # First name (John)
-                        surname=name_match.group(2),        # Surname (DOE)
+                        surname=name_match.group(2),        # Surname (DOE or ADAMS-WILSON)
                         student_number=name_match.group(3), # Student number (3472571)
                         extra_time_per_hour=int(extra_time_match.group(1)) # 30
                     )
@@ -617,6 +617,13 @@ class RAPReaderGUI:
         action_frame = ttk.Frame(options_frame)
         action_frame.pack(side=tk.RIGHT)
         
+        # Add Configure Course button
+        ttk.Button(
+            action_frame,
+            text="Configure Course",
+            command=self.configure_selected_course
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Add View Extra Time Data button
         ttk.Button(
             action_frame,
@@ -951,8 +958,8 @@ class RAPReaderGUI:
         btn_frame = ttk.Frame(dialog)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=10)
         
-        def configure_course():
-            """Configure selected course settings"""
+        def configure_course_from_manager():
+            """Configure selected course settings from the course manager"""
             selected = tree.selection()
             if not selected:
                 msg = "Please select a course to configure"
@@ -961,98 +968,11 @@ class RAPReaderGUI:
                 return
             
             course_id = str(tree.item(selected[0])['values'][0])  # Ensure course_id is string
-            course = self.reader.course_manager.courses[course_id]
-            self.logger.debug(f"Configuring course: {course.course_name} (ID: {course_id})")
+            self.configure_course(course_id)
             
-            # Create configuration dialog
-            config_dialog = tk.Toplevel(dialog)
-            config_dialog.title(f"Configure {course.course_name}")
-            config_dialog.geometry("500x200")
-            config_dialog.transient(dialog)
-            
-            # Set dialog icon
-            self._set_window_icon(config_dialog)
-            
-            # Course folder frame
-            folder_frame = ttk.LabelFrame(config_dialog, text="Course RAP Folder", padding="5")
-            folder_frame.pack(fill=tk.X, padx=5, pady=5)
-            
-            # Radio buttons for folder choice
-            folder_var = tk.StringVar(value="shared" if not course.course_rap_folder else "specific")
-            
-            def update_folder_state():
-                folder_entry.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
-                browse_btn.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
-            
-            ttk.Radiobutton(
-                folder_frame,
-                text="Use shared RAP folder",
-                variable=folder_var,
-                value="shared",
-                command=update_folder_state
-            ).pack(anchor=tk.W)
-            
-            specific_frame = ttk.Frame(folder_frame)
-            specific_frame.pack(fill=tk.X, pady=5)
-            
-            ttk.Radiobutton(
-                specific_frame,
-                text="Use course-specific folder:",
-                variable=folder_var,
-                value="specific",
-                command=update_folder_state
-            ).pack(side=tk.LEFT)
-            
-            folder_entry = ttk.Entry(specific_frame)
-            folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-            if course.course_rap_folder:
-                folder_entry.insert(0, str(course.course_rap_folder))
-            
-            def browse_folder():
-                folder = filedialog.askdirectory(
-                    title=f"Select RAP folder for {course.course_name}",
-                    initialdir=str(course.course_rap_folder or self.reader.course_manager.shared_rap_folder)
-                )
-                if folder:
-                    folder_entry.delete(0, tk.END)
-                    folder_entry.insert(0, folder)
-            
-            browse_btn = ttk.Button(specific_frame, text="Browse...", command=browse_folder)
-            browse_btn.pack(side=tk.LEFT)
-            
-            update_folder_state()
-            
-            # Buttons
-            btn_frame = ttk.Frame(config_dialog)
-            btn_frame.pack(side=tk.BOTTOM, pady=10)
-            
-            def save_config():
-                if folder_var.get() == "specific":
-                    folder = Path(folder_entry.get())
-                    course.course_rap_folder = folder
-                    # Create folder if it doesn't exist
-                    if not folder.exists():
-                        try:
-                            folder.mkdir(parents=True)
-                            self.logger.info(f"Created course-specific RAP folder: {folder}")
-                        except Exception as e:
-                            self.logger.error(f"Failed to create RAP folder: {e}")
-                            raise
-                    else:
-                        self.logger.debug(f"Using existing RAP folder: {folder}")
-                else:
-                    course.course_rap_folder = None
-                    self.logger.info(f"Course {course.course_name} set to use shared RAP folder")
-                
-                self.reader.course_manager.save_config()
-                # Update treeview
-                folder_text = str(course.course_rap_folder) if course.course_rap_folder else "Using shared folder"
-                tree.set(selected[0], 'folder', folder_text)
-                self.logger.info(f"Updated configuration for course: {course.course_name}")
-                config_dialog.destroy()
-            
-            ttk.Button(btn_frame, text="Save", command=save_config).pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="Cancel", command=config_dialog.destroy).pack(side=tk.LEFT, padx=5)
+            # Update treeview after configuration
+            folder = str(self.reader.course_manager.courses[course_id].course_rap_folder) if self.reader.course_manager.courses[course_id].course_rap_folder else "Using shared folder"
+            tree.set(selected[0], 'folder', folder)
         
         def refresh_courses():
             """Fetch and add new courses from Canvas"""
@@ -1099,7 +1019,7 @@ class RAPReaderGUI:
                 dialog.config(cursor="")
                 self.status_var.set("Ready")
         
-        ttk.Button(btn_frame, text="Configure", command=configure_course).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Configure", command=configure_course_from_manager).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Refresh from Canvas", command=refresh_courses).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
         
@@ -1360,6 +1280,107 @@ class RAPReaderGUI:
         setup.grab_set()
         setup.focus_set()
         setup.wait_window()
+
+    def configure_selected_course(self):
+        """Configure the currently selected course"""
+        if not self.reader.current_course:
+            messagebox.showerror("Error", "Please select a course first")
+            return
+        
+        course = self.reader.current_course
+        self.configure_course(course.course_id)
+    
+    def configure_course(self, course_id):
+        """Configure settings for a specific course"""
+        course = self.reader.course_manager.courses[course_id]
+        self.logger.debug(f"Configuring course: {course.course_name} (ID: {course_id})")
+        
+        # Create configuration dialog
+        config_dialog = tk.Toplevel(self.root)
+        config_dialog.title(f"Configure {course.course_name}")
+        config_dialog.geometry("500x200")
+        config_dialog.transient(self.root)
+        
+        # Set dialog icon
+        self._set_window_icon(config_dialog)
+        
+        # Course folder frame
+        folder_frame = ttk.LabelFrame(config_dialog, text="Course RAP Folder", padding="5")
+        folder_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Radio buttons for folder choice
+        folder_var = tk.StringVar(value="shared" if not course.course_rap_folder else "specific")
+        
+        def update_folder_state():
+            folder_entry.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
+            browse_btn.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
+        
+        ttk.Radiobutton(
+            folder_frame,
+            text="Use shared RAP folder",
+            variable=folder_var,
+            value="shared",
+            command=update_folder_state
+        ).pack(anchor=tk.W)
+        
+        specific_frame = ttk.Frame(folder_frame)
+        specific_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(
+            specific_frame,
+            text="Use course-specific folder:",
+            variable=folder_var,
+            value="specific",
+            command=update_folder_state
+        ).pack(side=tk.LEFT)
+        
+        folder_entry = ttk.Entry(specific_frame)
+        folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        if course.course_rap_folder:
+            folder_entry.insert(0, str(course.course_rap_folder))
+        
+        def browse_folder():
+            folder = filedialog.askdirectory(
+                title=f"Select RAP folder for {course.course_name}",
+                initialdir=str(course.course_rap_folder or self.reader.course_manager.shared_rap_folder)
+            )
+            if folder:
+                folder_entry.delete(0, tk.END)
+                folder_entry.insert(0, folder)
+        
+        browse_btn = ttk.Button(specific_frame, text="Browse...", command=browse_folder)
+        browse_btn.pack(side=tk.LEFT)
+        
+        update_folder_state()
+        
+        # Buttons
+        btn_frame = ttk.Frame(config_dialog)
+        btn_frame.pack(side=tk.BOTTOM, pady=10)
+        
+        def save_config():
+            if folder_var.get() == "specific":
+                folder = Path(folder_entry.get())
+                course.course_rap_folder = folder
+                # Create folder if it doesn't exist
+                if not folder.exists():
+                    try:
+                        folder.mkdir(parents=True)
+                        self.logger.info(f"Created course-specific RAP folder: {folder}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to create RAP folder: {e}")
+                        raise
+                else:
+                    self.logger.debug(f"Using existing RAP folder: {folder}")
+            else:
+                course.course_rap_folder = None
+                self.logger.info(f"Course {course.course_name} set to use shared RAP folder")
+            
+            self.reader.course_manager.save_config()
+            self.logger.info(f"Updated configuration for course: {course.course_name}")
+            config_dialog.destroy()
+        
+        ttk.Button(btn_frame, text="Save", command=save_config).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=config_dialog.destroy).pack(side=tk.LEFT, padx=5)
 
     def run(self):
         """Start the GUI"""
