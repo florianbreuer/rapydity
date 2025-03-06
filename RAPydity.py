@@ -684,6 +684,20 @@ class RAPReaderGUI:
             command=self.apply_extra_time
         ).pack(side=tk.LEFT, padx=5)
         
+        # Create the accent button style
+        style = ttk.Style()
+        style.configure("Accent.TButton", 
+                        font=('', 9, 'bold'))  # Make the font bold
+
+        # Add "Just Do It" button with distinctive styling and checkmark
+        just_do_it_button = ttk.Button(
+            action_frame,
+            text="✓ Just Do It!",  # Unicode checkmark
+            command=self.just_do_it,
+            style="Accent.TButton"  # Custom style for emphasis
+        )
+        just_do_it_button.pack(side=tk.LEFT, padx=5)
+        
         # Log frame
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="5")
         log_frame.pack(fill=tk.BOTH, expand=True)
@@ -1501,6 +1515,147 @@ class RAPReaderGUI:
         
         ttk.Button(btn_frame, text="Save", command=save_config).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=config_dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+    def just_do_it(self):
+        """Combined action to update RAPs and apply extra time to all quizzes"""
+        # Check if course is selected
+        if not self.reader.current_course:
+            messagebox.showerror("Error", "Please select a course first")
+            return
+        
+        # Show confirmation dialog
+        course_name = self.reader.current_course.course_name
+        confirm = messagebox.askokcancel(
+            "Confirm Action",
+            f"This will perform the following actions for {course_name}:\n\n"
+            f"1. Update student data from all RAP PDFs\n"
+            f"2. Apply extra time to ALL quizzes in this course\n\n"
+            f"Are you sure you want to proceed?",
+            icon='warning'
+        )
+        
+        if not confirm:
+            self.logger.info("Just Do It action cancelled by user")
+            return
+        
+        # Step 1: Update RAPs
+        self.logger.info("STEP 1: Updating from RAP PDFs...")
+        self.status_var.set("Updating from RAP PDFs...")
+        self.root.update()
+        
+        # Run the RAP update process
+        self.reader.update_csv_from_raps()
+        
+        # Check if we have student data after update
+        csv_path = self.reader.current_course.csv_file
+        if not csv_path.exists():
+            messagebox.showerror(
+                "Error", 
+                "No student data was created. Please check if there are RAP PDFs available."
+            )
+            self.status_var.set("Ready")
+            return
+        
+        students = self.reader._read_existing_csv(csv_path)
+        if not students:
+            messagebox.showerror(
+                "Error", 
+                "No students found in the data. Please check your RAP PDFs."
+            )
+            self.status_var.set("Ready")
+            return
+        
+        # Step 2: Apply extra time to all quizzes
+        self.logger.info("STEP 2: Applying extra time to all quizzes...")
+        self.status_var.set("Fetching quizzes from Canvas...")
+        self.root.config(cursor="watch")
+        self.root.update()
+        
+        try:
+            # Get all quizzes (assignments with time limits)
+            assignments = self.reader.canvas_api.list_assignments(published_only=True)
+            
+            # Filter to only include quizzes (assignments with time limits)
+            quizzes = []
+            for assignment in assignments:
+                time_limit = self.reader.canvas_api.get_assignment_time_limit(assignment['id'])
+                if time_limit is not None:  # Has a time limit
+                    quizzes.append(assignment)
+            
+            if not quizzes:
+                messagebox.showinfo(
+                    "No Quizzes Found", 
+                    "No quizzes with time limits were found in this course."
+                )
+                self.status_var.set("Ready")
+                self.root.config(cursor="")
+                return
+            
+            # Show confirmation with list of quizzes
+            quiz_names = "\n".join(f"• {q['name']}" for q in quizzes)
+            confirm_quizzes = messagebox.askokcancel(
+                "Confirm Quiz Selection",
+                f"Extra time will be applied to these {len(quizzes)} quizzes:\n\n{quiz_names}",
+                icon='info'
+            )
+            
+            if not confirm_quizzes:
+                self.logger.info("Quiz selection cancelled by user")
+                self.status_var.set("Ready")
+                self.root.config(cursor="")
+                return
+            
+            # Verify student enrollments
+            self.status_var.set("Verifying student enrollments...")
+            self.root.update()
+            student_ids = [s.canvas_id for s in students.values() if s.canvas_id]
+            active_ids = self.reader.canvas_api.verify_student_enrollments(student_ids)
+            
+            # Apply extra time to each quiz
+            success_count = 0
+            for quiz in quizzes:
+                self.status_var.set(f"Processing: {quiz['name']}")
+                self.root.update()
+                
+                # Get time limit
+                time_limit = self.reader.canvas_api.get_assignment_time_limit(quiz['id'])
+                
+                # Calculate adjustments for each student
+                adjustments = []
+                for student in students.values():
+                    if student.canvas_id in active_ids:
+                        # Calculate extra time (round up)
+                        extra_mins = int((student.extra_time_per_hour * time_limit) / 60 + 0.5)
+                        adjustments.append({
+                            'user_id': student.canvas_id,
+                            'extra_time_mins': extra_mins
+                        })
+                
+                # Apply the adjustments
+                if adjustments:
+                    try:
+                        self.reader.canvas_api.post_extra_time(quiz['id'], adjustments)
+                        self.logger.info(f"Applied extra time to {quiz['name']} for {len(adjustments)} students")
+                        success_count += 1
+                    except Exception as e:
+                        self.logger.error(f"Failed to apply extra time to {quiz['name']}: {e}")
+                else:
+                    self.logger.warning(f"No eligible students found for {quiz['name']}")
+            
+            # Show completion message
+            messagebox.showinfo(
+                "Process Complete",
+                f"The Just Do It process has completed:\n\n"
+                f"• Updated student data from RAP PDFs\n"
+                f"• Applied extra time to {success_count} of {len(quizzes)} quizzes"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error during Just Do It process: {e}")
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+        finally:
+            self.status_var.set("Ready")
+            self.root.config(cursor="")
 
     def run(self):
         """Start the GUI"""
