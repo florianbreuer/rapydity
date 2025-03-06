@@ -13,7 +13,7 @@ from tkinter import ttk, messagebox, scrolledtext, filedialog
 import platform
 import sys
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 @dataclass
 class CourseConfig:
@@ -606,13 +606,6 @@ class RAPReaderGUI:
             command=self._update_course_list
         ).pack(side=tk.LEFT, padx=5)
         
-        # Manage courses button
-        ttk.Button(
-            options_frame,
-            text="Manage Courses",
-            command=self.show_course_manager
-        ).pack(side=tk.LEFT, padx=5)
-        
         # Action buttons frame
         action_frame = ttk.Frame(options_frame)
         action_frame.pack(side=tk.RIGHT)
@@ -652,12 +645,23 @@ class RAPReaderGUI:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=20)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         
+        # Add buttons at the bottom of log frame
+        bottom_buttons_frame = ttk.Frame(log_frame)
+        bottom_buttons_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(5,0))
+        
         # Add Clear Log button
         ttk.Button(
-            log_frame,
+            bottom_buttons_frame,
             text="Clear Log",
             command=self.clear_log
-        ).pack(side=tk.BOTTOM, pady=(5,0))
+        ).pack(side=tk.LEFT, padx=(0,5))
+        
+        # Add Manage Courses button
+        ttk.Button(
+            bottom_buttons_frame,
+            text="Manage Courses",
+            command=self.show_course_manager
+        ).pack(side=tk.LEFT)
         
         # Add custom handler for logging to text widget
         text_handler = TextHandler(self.log_text)
@@ -736,7 +740,6 @@ class RAPReaderGUI:
             dialog = tk.Toplevel(self.root)
             dialog.title("Select Assignments")
             dialog.geometry("550x400")
-            dialog.transient(self.root)
             
             # Set dialog icon
             self._set_window_icon(dialog)
@@ -777,10 +780,6 @@ class RAPReaderGUI:
             # Buttons frame
             btn_frame = ttk.Frame(main_frame)
             btn_frame.grid(row=1, column=0, columnspan=2, pady=5)
-            
-            # Configure dialog grid weights
-            dialog.grid_columnconfigure(0, weight=1)
-            dialog.grid_rowconfigure(0, weight=1)
             
             def apply_extra_time():
                 selected = tree.selection()
@@ -927,7 +926,6 @@ class RAPReaderGUI:
         dialog = tk.Toplevel(self.root)
         dialog.title("Manage Courses")
         dialog.geometry("800x600")
-        dialog.transient(self.root)
         
         # Set dialog icon
         self._set_window_icon(dialog)
@@ -1026,10 +1024,6 @@ class RAPReaderGUI:
         # Configure grid weights
         dialog.grid_rowconfigure(0, weight=1)
         dialog.grid_columnconfigure(0, weight=1)
-        
-        # Make dialog modal
-        dialog.grab_set()
-        dialog.focus_set()
 
     def view_extra_time_data(self):
         """Display the extra time data from the CSV file"""
@@ -1046,13 +1040,16 @@ class RAPReaderGUI:
         viewer = tk.Toplevel(self.root)
         viewer.title(f"Extra Time Data - {self.reader.current_course.course_name}")
         viewer.geometry("800x600")
-        viewer.transient(self.root)
         
         # Set window icon
         self._set_window_icon(viewer)
         
+        # Create main frame with padding
+        main_frame = ttk.Frame(viewer, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
         # Create treeview
-        tree = ttk.Treeview(viewer, columns=('name', 'surname', 'student_number', 'extra_time'), show='headings')
+        tree = ttk.Treeview(main_frame, columns=('name', 'surname', 'student_number', 'extra_time'), show='headings')
         tree.heading('name', text='First Name')
         tree.heading('surname', text='Surname')
         tree.heading('student_number', text='Student Number')
@@ -1065,23 +1062,106 @@ class RAPReaderGUI:
         tree.column('extra_time', width=150)
         
         # Add scrollbar
-        scrollbar = ttk.Scrollbar(viewer, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
         
         # Layout
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=5)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Add button frame at the bottom
+        button_frame = ttk.Frame(viewer, padding="10")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Add Apply Extra Time button
+        ttk.Button(
+            button_frame,
+            text="Apply Extra Time",
+            command=self.apply_extra_time
+        ).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Add Close button
+        ttk.Button(
+            button_frame,
+            text="Close",
+            command=viewer.destroy
+        ).pack(side=tk.LEFT)
         
         # Read and display data
         try:
+            students_data = []
             students = self.reader._read_existing_csv(csv_path)
             for student in students.values():
-                tree.insert('', 'end', values=(
+                students_data.append((
                     student.name,
                     student.surname,
                     student.student_number,
                     student.extra_time_per_hour
                 ))
+            
+            # Variables to track sorting
+            sort_column = 'surname'  # Default sort by surname
+            sort_reverse = False
+            
+            def populate_tree(data):
+                """Clear and repopulate the treeview with the given data"""
+                # Clear existing items
+                for item in tree.get_children():
+                    tree.delete(item)
+                
+                # Add data to treeview
+                for values in data:
+                    tree.insert('', 'end', values=values)
+            
+            def sort_treeview():
+                """Sort the treeview based on current sort_column and sort_reverse"""
+                # Get column index for sorting
+                col_index = {'name': 0, 'surname': 1, 'student_number': 2, 'extra_time': 3}[sort_column]
+                
+                # Sort the data
+                sorted_data = sorted(
+                    students_data,
+                    key=lambda x: (
+                        # Handle numeric sorting for extra_time column
+                        int(x[col_index]) if sort_column == 'extra_time' else x[col_index].lower()
+                    ),
+                    reverse=sort_reverse
+                )
+                
+                # Update column headings to show sort indicators
+                for col in ('name', 'surname', 'student_number', 'extra_time'):
+                    if col == sort_column:
+                        indicator = " ▼" if sort_reverse else " ▲"
+                        tree.heading(col, text=f"{col.title().replace('_', ' ')}{indicator}", 
+                                    command=lambda c=col: sort_by_column(c))
+                    else:
+                        tree.heading(col, text=col.title().replace('_', ' '), 
+                                    command=lambda c=col: sort_by_column(c))
+                
+                # Repopulate the tree with sorted data
+                populate_tree(sorted_data)
+            
+            def sort_by_column(column):
+                """Handle column header click for sorting"""
+                nonlocal sort_column, sort_reverse
+                
+                if sort_column == column:
+                    # If already sorting by this column, reverse the order
+                    sort_reverse = not sort_reverse
+                else:
+                    # New sort column, default to ascending
+                    sort_column = column
+                    sort_reverse = False
+                
+                sort_treeview()
+            
+            # Set up column heading click events
+            for col in ('name', 'surname', 'student_number', 'extra_time'):
+                tree.heading(col, command=lambda c=col: sort_by_column(c))
+            
+            # Initial sort and display
+            sort_treeview()
+            
             self.logger.info(f"Displaying extra time data for {len(students)} students")
         except Exception as e:
             self.logger.error(f"Error reading CSV file: {e}")
@@ -1098,7 +1178,6 @@ class RAPReaderGUI:
         about = tk.Toplevel(self.root)
         about.title("About RAPydity")
         about.geometry("400x300")
-        about.transient(self.root)
         
         # Set window icon
         self._set_window_icon(about)
@@ -1168,10 +1247,6 @@ class RAPReaderGUI:
             text="Close",
             command=about.destroy
         ).pack(pady=(20, 0))
-        
-        # Make dialog modal
-        about.grab_set()
-        about.focus_set()
 
     def show_instructions(self):
         """Open instructions in default web browser"""
@@ -1276,7 +1351,6 @@ class RAPReaderGUI:
         ).pack()
         
         # Make dialog modal
-        setup.transient()
         setup.grab_set()
         setup.focus_set()
         setup.wait_window()
@@ -1299,7 +1373,6 @@ class RAPReaderGUI:
         config_dialog = tk.Toplevel(self.root)
         config_dialog.title(f"Configure {course.course_name}")
         config_dialog.geometry("500x200")
-        config_dialog.transient(self.root)
         
         # Set dialog icon
         self._set_window_icon(config_dialog)
