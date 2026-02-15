@@ -17,6 +17,7 @@ __pycache__/
 .vscode/
 .idea/
 *.code-workspace
+.claude
 
 # RAP PDFs and folders
 RAP/
