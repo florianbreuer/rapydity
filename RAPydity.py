@@ -13,16 +13,15 @@ from tkinter import ttk, messagebox, scrolledtext, filedialog
 import platform
 import sys
 
-__version__ = "0.9.1"
+__version__ = "2.0.0"
 
 @dataclass
 class CourseConfig:
     course_id: str
     course_name: str
     end_at: Optional[str] = None
-    course_rap_folder: Optional[Path] = None
     csv_file: Optional[Path] = None
-    
+
     def __post_init__(self):
         # Set default CSV filename if not provided
         if self.csv_file is None:
@@ -30,46 +29,51 @@ class CourseConfig:
         # Convert Path strings to Path objects if needed
         if isinstance(self.csv_file, str):
             self.csv_file = Path(self.csv_file)
-        if isinstance(self.course_rap_folder, str):
-            self.course_rap_folder = Path(self.course_rap_folder)
 
 class CourseManager:
     def __init__(self, canvas_api, logger=None):
         self.canvas_api = canvas_api
         self.logger = logger or logging.getLogger(__name__)
         self.config_file = Path('courses.ini')
-        
-        # Load shared RAP folder from config
+
+        # Load RAP CSV file path from config
         config = configparser.ConfigParser()
         if self.config_file.exists():
             config.read(self.config_file)
-            if 'General' in config:
+            if 'General' in config and config['General'].get('rap_csv_file'):
+                self.rap_csv_file = Path(config['General']['rap_csv_file'])
+            else:
+                self.rap_csv_file = None
+            # Keep legacy shared_rap_folder for PDF fallback
+            if 'General' in config and config['General'].get('shared_rap_folder'):
                 self.shared_rap_folder = Path(config['General']['shared_rap_folder'])
             else:
-                self.shared_rap_folder = Path('RAP')
+                self.shared_rap_folder = None
         else:
-            self.shared_rap_folder = Path('RAP')
-        
+            self.rap_csv_file = None
+            self.shared_rap_folder = None
+
         self.courses: Dict[str, CourseConfig] = {}
         self._load_config()
         
     def _load_config(self):
         """Load course configurations from file"""
         config = configparser.ConfigParser()
-        
+
         if not self.config_file.exists():
-            # Create default config with shared RAP folder
-            config['General'] = {
-                'shared_rap_folder': str(self.shared_rap_folder)
-            }
+            # Create default config
+            general = {}
+            if self.rap_csv_file:
+                general['rap_csv_file'] = str(self.rap_csv_file)
+            if self.shared_rap_folder:
+                general['shared_rap_folder'] = str(self.shared_rap_folder)
+            if general:
+                config['General'] = general
             with open(self.config_file, 'w') as f:
                 config.write(f)
         else:
             config.read(self.config_file)
-            # Load shared RAP folder
-            if 'General' in config:
-                self.shared_rap_folder = Path(config['General']['shared_rap_folder'])
-            
+
             # Load course configurations
             for section in config.sections():
                 if section.startswith('Course.'):
@@ -80,7 +84,6 @@ class CourseManager:
                         course_id=course_id,
                         course_name=config[section]['name'],
                         end_at=end_at,
-                        course_rap_folder=config[section].get('course_rap_folder'),
                         csv_file=config[section].get('csv_file')
                     )
                     self.courses[course_id] = course_config
@@ -88,12 +91,16 @@ class CourseManager:
     def save_config(self):
         """Save current configuration to file"""
         config = configparser.ConfigParser()
-        
+
         # Save general settings
-        config['General'] = {
-            'shared_rap_folder': str(self.shared_rap_folder)
-        }
-        
+        general = {}
+        if self.rap_csv_file:
+            general['rap_csv_file'] = str(self.rap_csv_file)
+        if self.shared_rap_folder:
+            general['shared_rap_folder'] = str(self.shared_rap_folder)
+        if general:
+            config['General'] = general
+
         # Save course configurations
         for course_id, course in self.courses.items():
             section = f'Course.{course_id}'
@@ -102,41 +109,28 @@ class CourseManager:
                 'end_at': course.end_at if course.end_at else '',
                 'csv_file': str(course.csv_file)
             }
-            if course.course_rap_folder:
-                config[section]['course_rap_folder'] = str(course.course_rap_folder)
-        
+
         with open(self.config_file, 'w') as f:
             config.write(f)
         
-    def add_course(self, course_id: str, course_name: str, 
-                  end_at: Optional[str] = None,
-                  course_rap_folder: Optional[Path] = None) -> CourseConfig:
+    def add_course(self, course_id: str, course_name: str,
+                  end_at: Optional[str] = None) -> CourseConfig:
         """Add a new course configuration"""
         self.logger.debug(f"Adding course {course_id}: {course_name} with end_at: {end_at}")
         course = CourseConfig(
             course_id=course_id,
             course_name=course_name,
             end_at=end_at,
-            course_rap_folder=course_rap_folder
         )
         self.courses[course_id] = course
         self.save_config()
         return course
-    
-    def get_rap_files(self, course_id: str) -> list[Path]:
-        """Get all RAP files for a course (from both shared and course-specific folders)"""
-        pdf_files = []
-        
-        # Get PDFs from shared folder
-        if self.shared_rap_folder.exists():
-            pdf_files.extend(self.shared_rap_folder.glob('*.pdf'))
-        
-        # Get PDFs from course-specific folder if it exists
-        course = self.courses.get(course_id)
-        if course and course.course_rap_folder and course.course_rap_folder.exists():
-            pdf_files.extend(course.course_rap_folder.glob('*.pdf'))
-        
-        return pdf_files
+
+    def get_rap_pdf_files(self, folder: Path) -> list:
+        """Get all RAP PDF files from a folder (legacy PDF support)"""
+        if folder and folder.exists():
+            return list(folder.glob('*.pdf'))
+        return []
 
 @dataclass
 class Student:
@@ -288,8 +282,62 @@ class RAPReader:
 
         except Exception as e:
             self.logger.error(f"Error processing {pdf_path}: {e}")
-        
+
         return None
+
+    def extract_students_from_rap_csv(self, csv_path: Path) -> Dict[str, Student]:
+        """Extract student info from a RAP CSV file.
+
+        Reads columns: u_student_id, u_exam_time, u_requested_for1
+        Returns dict keyed by student number (only students with extra time).
+        """
+        students = {}
+        no_time_phrases = {'no additional time required', 'no additional time required.', ''}
+
+        try:
+            with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    raw_id = row.get('u_student_id', '').strip()
+                    raw_time = row.get('u_exam_time', '').strip()
+                    raw_name = row.get('u_requested_for1', '').strip()
+
+                    # Parse student number: strip leading C/c
+                    student_number = raw_id.lstrip('Cc')
+                    if not student_number or not student_number.isdigit():
+                        self.logger.debug(f"Skipping row with invalid student ID: '{raw_id}'")
+                        continue
+
+                    # Parse extra time
+                    if raw_time.lower() in no_time_phrases:
+                        continue  # No extra time needed
+
+                    time_match = re.search(r'(\d+)', raw_time)
+                    if time_match:
+                        extra_time = int(time_match.group(1))
+                    else:
+                        self.logger.warning(
+                            f"Unrecognized exam time format for student {raw_id}: '{raw_time}'"
+                        )
+                        continue
+
+                    # Parse name
+                    parts = raw_name.split()
+                    name = parts[0] if parts else ""
+                    surname = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+                    students[student_number] = Student(
+                        name=name,
+                        surname=surname,
+                        student_number=student_number,
+                        extra_time_per_hour=extra_time
+                    )
+
+            self.logger.info(f"Read {len(students)} students with extra time from RAP CSV")
+        except Exception as e:
+            self.logger.error(f"Error reading RAP CSV {csv_path}: {e}")
+
+        return students
 
     def _read_existing_csv(self, csv_path: Path) -> Dict[str, Student]:
         """Read existing CSV file into dictionary keyed by student number"""
@@ -319,19 +367,23 @@ class RAPReader:
         self.logger.info(f"Wrote {len(students)} students to {csv_path}")
 
 
-    def update_csv_from_raps(self):
-        """Update extra_time.csv with information from RAP PDFs"""
+    def update_csv_from_raps(self, source="csv"):
+        """Update extra_time.csv with information from RAP data.
+
+        Args:
+            source: "csv" to read from RAP CSV file, "pdf" to read from PDF folder.
+        """
         if not self.current_course:
             self.logger.error("No course selected")
             return
-        
+
         course = self.current_course
-        self.logger.info("Starting RAP processing...")
-        
+        self.logger.info(f"Starting RAP processing (source: {source})...")
+
         # Initialize counters for warnings and errors
         warning_count = 0
         error_count = 0
-        
+
         # Create a custom handler to count warnings and errors
         class CountingHandler(logging.Handler):
             def emit(self, record):
@@ -340,66 +392,96 @@ class RAPReader:
                     warning_count += 1
                 elif record.levelno >= logging.ERROR:
                     error_count += 1
-        
+
         # Add the counting handler temporarily
         counting_handler = CountingHandler()
         self.logger.addHandler(counting_handler)
-        
+
         try:
             students_by_number = self._read_existing_csv(course.csv_file)
-            
-            # Process each PDF in RAP folder
-            pdf_count = 0
             new_count = 0
-            
-            # Get PDFs from both shared and course-specific folders
-            pdf_files = self.course_manager.get_rap_files(course.course_id)
-            for pdf_path in pdf_files:
-                pdf_count += 1
-                student = self.extract_student_info_from_pdf(pdf_path)
-                if student:
-                    if student.student_number not in students_by_number:
-                        # Look up Canvas ID for new student
-                        canvas_id = self.canvas_api.find_student_canvas_id(course.course_id, student.student_number)
+
+            if source == "csv":
+                # CSV mode: read RAP CSV, filter by enrollment
+                rap_csv = self.course_manager.rap_csv_file
+                if not rap_csv or not rap_csv.exists():
+                    self.logger.error("No RAP CSV file configured or file not found")
+                    return
+
+                all_rap_students = self.extract_students_from_rap_csv(rap_csv)
+                self.logger.info(f"Found {len(all_rap_students)} students with extra time in RAP CSV")
+
+                # Filter to only students enrolled in this course
+                for student_number, student in all_rap_students.items():
+                    if student_number not in students_by_number:
+                        canvas_id = self.canvas_api.find_student_canvas_id(
+                            course.course_id, student_number
+                        )
                         if canvas_id:
                             student.canvas_id = canvas_id
-                            students_by_number[student.student_number] = student
+                            students_by_number[student_number] = student
                             new_count += 1
-                            msg = f"Added new student: {student.name} {student.surname}"
-                            self.logger.info(msg)
-                        else:
-                            msg = f"Could not find Canvas ID for student: {student.name} {student.surname} (probably not enrolled in this course)"
-                            self.logger.warning(msg)
+                            self.logger.info(f"Added new student: {student.name} {student.surname}")
+                        # No warning here - most RAP CSV students won't be in this course
                     else:
-                        msg = f"Student already exists: {student.name} {student.surname}"
-                        self.logger.info(msg)
-            
+                        self.logger.info(f"Student already exists: {students_by_number[student_number].name} {students_by_number[student_number].surname}")
+
+                self.logger.info(f"Added {new_count} new students from RAP CSV")
+
+            elif source == "pdf":
+                # PDF mode: legacy fallback
+                rap_folder = self.course_manager.shared_rap_folder
+                if not rap_folder:
+                    self.logger.error("No shared RAP folder configured for PDF processing")
+                    return
+
+                pdf_files = self.course_manager.get_rap_pdf_files(rap_folder)
+                pdf_count = 0
+
+                for pdf_path in pdf_files:
+                    pdf_count += 1
+                    student = self.extract_student_info_from_pdf(pdf_path)
+                    if student:
+                        if student.student_number not in students_by_number:
+                            canvas_id = self.canvas_api.find_student_canvas_id(
+                                course.course_id, student.student_number
+                            )
+                            if canvas_id:
+                                student.canvas_id = canvas_id
+                                students_by_number[student.student_number] = student
+                                new_count += 1
+                                self.logger.info(f"Added new student: {student.name} {student.surname}")
+                            else:
+                                self.logger.warning(
+                                    f"Could not find Canvas ID for student: {student.name} {student.surname} "
+                                    f"(probably not enrolled in this course)"
+                                )
+                        else:
+                            self.logger.info(f"Student already exists: {student.name} {student.surname}")
+
+                self.logger.info(f"Processed {pdf_count} PDFs")
+                self.logger.info(f"Added {new_count} new students")
+
             # Write updated CSV
             self._write_csv(list(students_by_number.values()), course.csv_file)
-            
-            summary = f"\nProcessed {pdf_count} PDFs"
-            self.logger.info(summary)
-            
-            summary = f"Added {new_count} new students"
-            self.logger.info(summary)
-            
+
             # Show alert if there were warnings or errors
             if warning_count > 0 or error_count > 0:
                 import tkinter.messagebox as messagebox
-                
+
                 message = "Issues occurred during RAP processing:\n\n"
                 if warning_count > 0:
                     message += f"• {warning_count} warning{'s' if warning_count > 1 else ''}\n"
                 if error_count > 0:
                     message += f"• {error_count} error{'s' if error_count > 1 else ''}\n"
-                
+
                 message += "\nPlease review the log for details."
-                
+
                 if error_count > 0:
                     messagebox.showerror("Processing Errors", message)
                 else:
                     messagebox.showwarning("Processing Warnings", message)
-        
+
         finally:
             # Remove the counting handler
             self.logger.removeHandler(counting_handler)
@@ -599,7 +681,25 @@ class RAPReaderGUI:
             if not self.reader.initialize_from_config():
                 messagebox.showerror("Error", "Failed to initialize application")
                 sys.exit(1)
-        
+
+        # Check RAP CSV file is configured and exists
+        if self.reader.course_manager:
+            rap_csv = self.reader.course_manager.rap_csv_file
+            if rap_csv and rap_csv.exists():
+                self.logger.info(f"Using RAP CSV file: {rap_csv}")
+            else:
+                # Show file picker to select RAP CSV
+                filepath = filedialog.askopenfilename(
+                    title="Select RAP CSV File",
+                    filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+                )
+                if filepath:
+                    self.reader.course_manager.rap_csv_file = Path(filepath)
+                    self.reader.course_manager.save_config()
+                    self.logger.info(f"RAP CSV file set to: {filepath}")
+                else:
+                    self.logger.warning("No RAP CSV file selected. You can set one later via 'Change RAP File...'")
+
         self.root = tk.Tk()
         self.root.title(f"RAPydity v{__version__}")
         self.root.geometry("800x600")
@@ -656,37 +756,37 @@ class RAPReaderGUI:
         # Action buttons frame
         action_frame = ttk.Frame(options_frame)
         action_frame.pack(side=tk.RIGHT)
-        
-        # Add Configure Course button
-        ttk.Button(
-            action_frame,
-            text="Configure Course",
-            command=self.configure_selected_course
-        ).pack(side=tk.LEFT, padx=5)
-        
+
         # Add View Extra Time Data button
         ttk.Button(
             action_frame,
             text="View Extra Time Data",
             command=self.view_extra_time_data
         ).pack(side=tk.LEFT, padx=5)
-        
-        # Move RAP and Extra Time buttons here
+
+        # Update from RAP CSV button (primary)
+        ttk.Button(
+            action_frame,
+            text="Update from RAP CSV",
+            command=self.update_raps_csv
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Update from RAP PDFs button (legacy fallback)
         ttk.Button(
             action_frame,
             text="Update from RAP PDFs",
-            command=self.update_raps
+            command=self.update_raps_pdf
         ).pack(side=tk.LEFT, padx=5)
-        
+
         ttk.Button(
             action_frame,
             text="Apply Extra Time",
             command=self.apply_extra_time
         ).pack(side=tk.LEFT, padx=5)
-        
+
         # Create the accent button style
         style = ttk.Style()
-        style.configure("Accent.TButton", 
+        style.configure("Accent.TButton",
                         font=('', 9, 'bold'))  # Make the font bold
 
         # Add "Just Do It" button with distinctive styling and checkmark
@@ -716,12 +816,19 @@ class RAPReaderGUI:
             text="Clear Log",
             command=self.clear_log
         ).pack(side=tk.LEFT, padx=(0,5))
-        
+
         # Add Manage Courses button
         ttk.Button(
             bottom_buttons_frame,
             text="Manage Courses",
             command=self.show_course_manager
+        ).pack(side=tk.LEFT, padx=(0,5))
+
+        # Add Change RAP File button
+        ttk.Button(
+            bottom_buttons_frame,
+            text="Change RAP File...",
+            command=self.change_rap_file
         ).pack(side=tk.LEFT)
         
         # Add custom handler for logging to text widget
@@ -749,21 +856,62 @@ class RAPReaderGUI:
         except Exception as e:
             self.logger.warning(f"Could not load icon: {e}")
 
-    def update_raps(self):
-        """Handle updating from RAP PDFs"""
+    def update_raps_csv(self):
+        """Handle updating from RAP CSV file"""
+        if not self.reader.course_manager.rap_csv_file or not self.reader.course_manager.rap_csv_file.exists():
+            messagebox.showerror("Error", "No RAP CSV file configured. Use 'Change RAP File...' to select one.")
+            return
         try:
-            self.status_var.set("Processing RAP files...")
-            self.root.config(cursor="watch")  # Change cursor to hourglass/watch
+            self.status_var.set("Processing RAP CSV...")
+            self.root.config(cursor="watch")
             self.root.update()
-            self.reader.update_csv_from_raps()
+            self.reader.update_csv_from_raps(source="csv")
             self.status_var.set("Ready")
         except Exception as e:
-            error_msg = f"Failed to process RAP files: {str(e)}"
+            error_msg = f"Failed to process RAP CSV: {str(e)}"
             self.logger.error(error_msg)
             messagebox.showerror("Error", error_msg)
             self.status_var.set("Error occurred")
         finally:
-            self.root.config(cursor="")  # Restore default cursor
+            self.root.config(cursor="")
+
+    def update_raps_pdf(self):
+        """Handle updating from RAP PDFs (legacy fallback)"""
+        if not self.reader.course_manager.shared_rap_folder:
+            # Ask user to select a folder
+            folder = filedialog.askdirectory(title="Select folder containing RAP PDFs")
+            if not folder:
+                return
+            self.reader.course_manager.shared_rap_folder = Path(folder)
+            self.reader.course_manager.save_config()
+        try:
+            self.status_var.set("Processing RAP PDFs...")
+            self.root.config(cursor="watch")
+            self.root.update()
+            self.reader.update_csv_from_raps(source="pdf")
+            self.status_var.set("Ready")
+        except Exception as e:
+            error_msg = f"Failed to process RAP PDFs: {str(e)}"
+            self.logger.error(error_msg)
+            messagebox.showerror("Error", error_msg)
+            self.status_var.set("Error occurred")
+        finally:
+            self.root.config(cursor="")
+
+    def change_rap_file(self):
+        """Open file picker to change the RAP CSV file"""
+        initial_dir = None
+        if self.reader.course_manager.rap_csv_file:
+            initial_dir = str(self.reader.course_manager.rap_csv_file.parent)
+        filepath = filedialog.askopenfilename(
+            title="Select RAP CSV File",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialdir=initial_dir
+        )
+        if filepath:
+            self.reader.course_manager.rap_csv_file = Path(filepath)
+            self.reader.course_manager.save_config()
+            self.logger.info(f"RAP CSV file changed to: {filepath}")
     
     def apply_extra_time(self):
         """Show dialog for selecting assignments to apply extra time to"""
@@ -778,7 +926,7 @@ class RAPReaderGUI:
         if not csv_path.exists():
             messagebox.showerror(
                 "Error", 
-                "No student data found. Please process RAP files first."
+                "No student data found. Please update from RAP CSV first."
             )
             self.status_var.set("Ready")
             return
@@ -788,7 +936,7 @@ class RAPReaderGUI:
         if not students:
             messagebox.showerror(
                 "Error", 
-                "No students found in CSV file. Please process RAP files first."
+                "No students found in CSV file. Please update from RAP CSV first."
             )
             self.status_var.set("Ready")
             return
@@ -986,59 +1134,40 @@ class RAPReaderGUI:
         """Show dialog for managing courses"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Manage Courses")
-        dialog.geometry("800x600")
-        
+        dialog.geometry("700x600")
+
         # Set dialog icon
         self._set_window_icon(dialog)
-        
+
         # Create treeview for courses
-        tree = ttk.Treeview(dialog, columns=('id', 'name', 'folder'), show='headings')
+        tree = ttk.Treeview(dialog, columns=('id', 'name'), show='headings')
         tree.heading('id', text='Course ID')
         tree.heading('name', text='Course Name')
-        tree.heading('folder', text='Course RAP Folder')
         tree.column('id', width=100)
-        tree.column('name', width=400)
-        tree.column('folder', width=200)
-        
+        tree.column('name', width=500, stretch=True)
+
         # Add scrollbar
         scrollbar = ttk.Scrollbar(dialog, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
-        
+
         # Add current courses to treeview
         for course in self.reader.course_manager.courses.values():
-            folder = str(course.course_rap_folder) if course.course_rap_folder else "Using shared folder"
-            tree.insert('', 'end', values=(course.course_id, course.course_name, folder))
-        
+            tree.insert('', 'end', values=(course.course_id, course.course_name))
+
         # Layout
         tree.grid(row=0, column=0, sticky='nsew', padx=5, pady=5)
         scrollbar.grid(row=0, column=1, sticky='ns')
-        
+
         # Buttons frame
         btn_frame = ttk.Frame(dialog)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=10)
-        
-        def configure_course_from_manager():
-            """Configure selected course settings from the course manager"""
-            selected = tree.selection()
-            if not selected:
-                msg = "Please select a course to configure"
-                self.logger.warning(msg)
-                messagebox.showwarning("Warning", msg)
-                return
-            
-            course_id = str(tree.item(selected[0])['values'][0])  # Ensure course_id is string
-            self.configure_course(course_id)
-            
-            # Update treeview after configuration
-            folder = str(self.reader.course_manager.courses[course_id].course_rap_folder) if self.reader.course_manager.courses[course_id].course_rap_folder else "Using shared folder"
-            tree.set(selected[0], 'folder', folder)
-        
+
         def refresh_courses():
             """Fetch and add new courses from Canvas"""
             self.status_var.set("Fetching courses from Canvas...")
             dialog.config(cursor="watch")
             dialog.update()
-            
+
             try:
                 courses = self.reader.canvas_api.list_courses()
                 self.logger.debug("Raw course data received from Canvas:")
@@ -1051,15 +1180,15 @@ class RAPReaderGUI:
                         f"  concluded: {course.get('concluded')}\n"
                         f"  effective end date: {course['effective_end_at']}"
                     )
-                
+
                 if not courses:
                     messagebox.showwarning("No Courses", "No courses found in Canvas")
                     return
-                
+
                 # Clear existing items
                 for item in tree.get_children():
                     tree.delete(item)
-                
+
                 # Add all courses
                 for course in courses:
                     course_id = str(course['id'])
@@ -1067,8 +1196,8 @@ class RAPReaderGUI:
                     end_at = course.get('effective_end_at')
                     self.logger.debug(f"Adding course: {course_id} - {course_name} (ends: {end_at})")
                     self.reader.course_manager.add_course(course_id, course_name, end_at)
-                    tree.insert('', 'end', values=(course_id, course_name, "Using shared folder"))
-                
+                    tree.insert('', 'end', values=(course_id, course_name))
+
                 self._update_course_list()
                 self.logger.info(f"Successfully added {len(courses)} courses from Canvas")
                 messagebox.showinfo("Success", f"Added {len(courses)} courses")
@@ -1077,11 +1206,10 @@ class RAPReaderGUI:
             finally:
                 dialog.config(cursor="")
                 self.status_var.set("Ready")
-        
-        ttk.Button(btn_frame, text="Configure", command=configure_course_from_manager).pack(side=tk.LEFT, padx=5)
+
         ttk.Button(btn_frame, text="Refresh from Canvas", command=refresh_courses).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-        
+
         # Configure grid weights
         dialog.grid_rowconfigure(0, weight=1)
         dialog.grid_columnconfigure(0, weight=1)
@@ -1094,7 +1222,7 @@ class RAPReaderGUI:
             
         csv_path = self.reader.current_course.csv_file
         if not csv_path.exists():
-            self.logger.info("No extra time data found. Please run 'Update from RAP PDFs' first to process RAP files.")
+            self.logger.info("No extra time data found. Please run 'Update from RAP CSV' first to process RAP data.")
             return
             
         # Create data viewer window
@@ -1351,51 +1479,45 @@ class RAPReaderGUI:
             command=open_canvas_help
         ).pack(side=tk.LEFT)
         
-        # RAP folder frame
-        folder_frame = ttk.LabelFrame(main_frame, text="Shared RAP Folder", padding="10")
-        folder_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        folder_var = tk.StringVar(value=str(Path.home() / 'RAP'))
-        folder_entry = ttk.Entry(folder_frame, textvariable=folder_var, width=50)
-        folder_entry.pack(side=tk.LEFT, padx=(0, 10))
-        
-        def browse_folder():
-            folder = filedialog.askdirectory(
-                title="Select Shared RAP Folder",
-                initialdir=folder_var.get()
+        # RAP CSV file frame
+        csv_frame = ttk.LabelFrame(main_frame, text="RAP CSV File", padding="10")
+        csv_frame.pack(fill=tk.X, pady=(0, 20))
+
+        csv_var = tk.StringVar()
+        csv_entry = ttk.Entry(csv_frame, textvariable=csv_var, width=50)
+        csv_entry.pack(side=tk.LEFT, padx=(0, 10))
+
+        def browse_csv():
+            filepath = filedialog.askopenfilename(
+                title="Select RAP CSV File",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
             )
-            if folder:
-                folder_var.set(folder)
-        
+            if filepath:
+                csv_var.set(filepath)
+
         ttk.Button(
-            folder_frame,
+            csv_frame,
             text="Browse...",
-            command=browse_folder
+            command=browse_csv
         ).pack(side=tk.LEFT)
-        
+
         def save_config():
             if not token_var.get().strip():
                 messagebox.showerror("Error", "Please enter your Canvas API token")
                 return
-                
-            # Create folders if they don't exist
-            rap_folder = Path(folder_var.get())
-            try:
-                rap_folder.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not create RAP folder: {e}")
-                return
-            
+
             # Save configuration
             config = configparser.ConfigParser()
             config['canvas'] = {
                 'access_token': token_var.get().strip(),
                 'base_url': 'https://canvas.newcastle.edu.au/'
             }
-            config['General'] = {
-                'shared_rap_folder': str(rap_folder)
-            }
-            
+            general = {}
+            if csv_var.get().strip():
+                general['rap_csv_file'] = csv_var.get().strip()
+            if general:
+                config['General'] = general
+
             try:
                 with open('config.ini', 'w') as f:
                     config.write(f)
@@ -1416,106 +1538,6 @@ class RAPReaderGUI:
         setup.focus_set()
         setup.wait_window()
 
-    def configure_selected_course(self):
-        """Configure the currently selected course"""
-        if not self.reader.current_course:
-            messagebox.showerror("Error", "Please select a course first")
-            return
-        
-        course = self.reader.current_course
-        self.configure_course(course.course_id)
-    
-    def configure_course(self, course_id):
-        """Configure settings for a specific course"""
-        course = self.reader.course_manager.courses[course_id]
-        self.logger.debug(f"Configuring course: {course.course_name} (ID: {course_id})")
-        
-        # Create configuration dialog
-        config_dialog = tk.Toplevel(self.root)
-        config_dialog.title(f"Configure {course.course_name}")
-        config_dialog.geometry("500x200")
-        
-        # Set dialog icon
-        self._set_window_icon(config_dialog)
-        
-        # Course folder frame
-        folder_frame = ttk.LabelFrame(config_dialog, text="Course RAP Folder", padding="5")
-        folder_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Radio buttons for folder choice
-        folder_var = tk.StringVar(value="shared" if not course.course_rap_folder else "specific")
-        
-        def update_folder_state():
-            folder_entry.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
-            browse_btn.configure(state='normal' if folder_var.get() == "specific" else 'disabled')
-        
-        ttk.Radiobutton(
-            folder_frame,
-            text="Use shared RAP folder",
-            variable=folder_var,
-            value="shared",
-            command=update_folder_state
-        ).pack(anchor=tk.W)
-        
-        specific_frame = ttk.Frame(folder_frame)
-        specific_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Radiobutton(
-            specific_frame,
-            text="Use course-specific folder:",
-            variable=folder_var,
-            value="specific",
-            command=update_folder_state
-        ).pack(side=tk.LEFT)
-        
-        folder_entry = ttk.Entry(specific_frame)
-        folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        if course.course_rap_folder:
-            folder_entry.insert(0, str(course.course_rap_folder))
-        
-        def browse_folder():
-            folder = filedialog.askdirectory(
-                title=f"Select RAP folder for {course.course_name}",
-                initialdir=str(course.course_rap_folder or self.reader.course_manager.shared_rap_folder)
-            )
-            if folder:
-                folder_entry.delete(0, tk.END)
-                folder_entry.insert(0, folder)
-        
-        browse_btn = ttk.Button(specific_frame, text="Browse...", command=browse_folder)
-        browse_btn.pack(side=tk.LEFT)
-        
-        update_folder_state()
-        
-        # Buttons
-        btn_frame = ttk.Frame(config_dialog)
-        btn_frame.pack(side=tk.BOTTOM, pady=10)
-        
-        def save_config():
-            if folder_var.get() == "specific":
-                folder = Path(folder_entry.get())
-                course.course_rap_folder = folder
-                # Create folder if it doesn't exist
-                if not folder.exists():
-                    try:
-                        folder.mkdir(parents=True)
-                        self.logger.info(f"Created course-specific RAP folder: {folder}")
-                    except Exception as e:
-                        self.logger.error(f"Failed to create RAP folder: {e}")
-                        raise
-                else:
-                    self.logger.debug(f"Using existing RAP folder: {folder}")
-            else:
-                course.course_rap_folder = None
-                self.logger.info(f"Course {course.course_name} set to use shared RAP folder")
-            
-            self.reader.course_manager.save_config()
-            self.logger.info(f"Updated configuration for course: {course.course_name}")
-            config_dialog.destroy()
-        
-        ttk.Button(btn_frame, text="Save", command=save_config).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=config_dialog.destroy).pack(side=tk.LEFT, padx=5)
-
     def just_do_it(self):
         """Combined action to update RAPs and apply extra time to all quizzes"""
         # Check if course is selected
@@ -1528,39 +1550,39 @@ class RAPReaderGUI:
         confirm = messagebox.askokcancel(
             "Confirm Action",
             f"This will perform the following actions for {course_name}:\n\n"
-            f"1. Update student data from all RAP PDFs\n"
+            f"1. Update student data from RAP CSV\n"
             f"2. Apply extra time to ALL quizzes in this course\n\n"
             f"Are you sure you want to proceed?",
             icon='warning'
         )
-        
+
         if not confirm:
             self.logger.info("Just Do It action cancelled by user")
             return
-        
-        # Step 1: Update RAPs
-        self.logger.info("STEP 1: Updating from RAP PDFs...")
-        self.status_var.set("Updating from RAP PDFs...")
+
+        # Step 1: Update RAPs from CSV
+        self.logger.info("STEP 1: Updating from RAP CSV...")
+        self.status_var.set("Updating from RAP CSV...")
         self.root.update()
-        
+
         # Run the RAP update process
-        self.reader.update_csv_from_raps()
-        
+        self.reader.update_csv_from_raps(source="csv")
+
         # Check if we have student data after update
         csv_path = self.reader.current_course.csv_file
         if not csv_path.exists():
             messagebox.showerror(
-                "Error", 
-                "No student data was created. Please check if there are RAP PDFs available."
+                "Error",
+                "No student data was created. Please check that the RAP CSV file is configured."
             )
             self.status_var.set("Ready")
             return
-        
+
         students = self.reader._read_existing_csv(csv_path)
         if not students:
             messagebox.showerror(
-                "Error", 
-                "No students found in the data. Please check your RAP PDFs."
+                "Error",
+                "No students found in the data. Please check your RAP CSV file."
             )
             self.status_var.set("Ready")
             return
@@ -1646,7 +1668,7 @@ class RAPReaderGUI:
             messagebox.showinfo(
                 "Process Complete",
                 f"The Just Do It process has completed:\n\n"
-                f"• Updated student data from RAP PDFs\n"
+                f"• Updated student data from RAP CSV\n"
                 f"• Applied extra time to {success_count} of {len(quizzes)} quizzes"
             )
             
