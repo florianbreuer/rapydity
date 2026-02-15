@@ -36,10 +36,10 @@
 <body>
     <div style="text-align: center; margin-bottom: 20px;">
         <img src="R_logo3.gif" alt="RAPydity Logo" style="max-width: 150px;">
-        <h1>RAPydity v0.9.1 - RAP Processing Tool</h1>
+        <h1>RAPydity v2.0.0 - RAP Processing Tool</h1>
     </div>
-    
-    <p>RAPydity is a tool for processing Reasonable Adjustment Plans (RAPs) directly from the PDF files and applying extra time accommodations to Canvas assignments.</p>
+
+    <p>RAPydity is a tool for processing Reasonable Adjustment Plans (RAPs) and applying extra time accommodations to Canvas assignments. As of v2.0, RAP data is read from a single CSV file rather than individual PDF files.</p>
 
     <h2>Installation</h2>
     <ol>
@@ -51,7 +51,7 @@
                 <li>During installation, make sure to check "Add Python to PATH"</li>
             </ul>
         </li>
-        
+
         <li>
             <strong>Download and Setup</strong>
             <ul>
@@ -60,12 +60,12 @@
                 <li>Open a terminal/command prompt and navigate to the RAPydity folder</li>
                 <li>Create and activate a virtual environment (recommended):
                     <ul>
-                        <li>Windows: 
-                            <code>python -m venv venv</code> then 
+                        <li>Windows:
+                            <code>python -m venv venv</code> then
                             <code>venv\Scripts\activate</code>
                         </li>
-                        <li>Mac/Linux: 
-                            <code>python3 -m venv venv</code> then 
+                        <li>Mac/Linux:
+                            <code>python3 -m venv venv</code> then
                             <code>source venv/bin/activate</code>
                         </li>
                     </ul>
@@ -108,16 +108,9 @@
     <ol>
         <li>On first run, you'll need to:
             <ul>
-                <li><strong>Select a Shared RAP Folder</strong>
-                    <ul>
-                        <li>This is where RAP PDFs accessible to all courses will be stored</li>
-                        <li>The default location is <code>RAP/</code> in your home directory</li>
-                        <li>You can change this location during setup or later via the course manager</li>
-                    </ul>
-                </li>
                 <li><strong>Enter your Canvas API access token</strong>
                     <ul>
-                        <li>Go to Canvas → Account → Settings</li>
+                        <li>Go to Canvas &rarr; Account &rarr; Settings</li>
                         <li>Scroll down to "Approved Integrations"</li>
                         <li>Click "+ New Access Token"</li>
                         <li>Give it a purpose (e.g., "RAPydity")</li>
@@ -125,6 +118,23 @@
                         <li>Click "Generate Token" and copy the token</li>
                         <li>Paste the token into RAPydity when prompted</li>
                         <li><strong>Important:</strong> Save this token somewhere safe as Canvas won't show it again</li>
+                    </ul>
+                </li>
+                <li><strong>Select the RAP CSV File</strong>
+                    <img src="ServiceNowScreenshot.png" alt="ServiceNow Screenshot" style="max-width: 100%; margin: 10px 0;">
+                    <ul>
+                        <li>In the RAP view of your ServiceNow portal, click on "personalize fields" (red arrow) and make sure that
+                            "Exam Time" is included, together with "Student Name" and "Student ID".</li>
+                        <li>Export the data as a CSV file and save it somewhere convenient.</li>
+                        <li>The CSV file should contain the columns:
+                            <ul>
+                                <li><code>u_student_id</code> - Student number prefixed by "C" (e.g., "C3472571")</li>
+                                <li><code>u_exam_time</code> - Extra time allocation (e.g., "10 mins/hr.")</li>
+                                <li><code>u_requested_for1</code> - Student's full name</li>
+                            </ul>
+                        </li>
+                        <li>You can optionally select this file during initial setup, or you will be prompted on startup</li>
+                        <li>You can change the file at any time using the "Change RAP File..." button</li>
                     </ul>
                 </li>
             </ul>
@@ -143,7 +153,6 @@
         <li>Click "Manage Courses" to:
             <ul>
                 <li>Refresh the course list from Canvas</li>
-                <li>Configure course-specific RAP folders</li>
                 <li>View all available courses</li>
             </ul>
         </li>
@@ -159,22 +168,29 @@
             </ul>
         </li>
         <li>Click any column header to sort the data</li>
-        <li>This view is read-only - to update data, use "Update from RAP PDFs"</li>
+        <li>This view is read-only - to update data, use "Update from RAP CSV"</li>
     </ol>
 
     <h2>RAP Processing</h2>
     <ol>
-        <li>Place RAP PDFs in either:
+        <li><strong>From CSV (Primary Method)</strong>
             <ul>
-                <li>The shared RAP folder (default: <code>RAP/</code>)</li>
-                <li>A course-specific folder (if configured)</li>
+                <li>Ensure the RAP CSV file is selected (see Initial Setup above, or use "Change RAP File...")</li>
+                <li>Click "Update from RAP CSV" to:
+                    <ul>
+                        <li>Read student accommodations from the RAP CSV</li>
+                        <li>Filter to only students enrolled in the selected course</li>
+                        <li>Look up Canvas IDs for new students</li>
+                        <li>Save the information to a course-specific data file</li>
+                    </ul>
+                </li>
             </ul>
         </li>
-        <li>Click "Update from RAP PDFs" to:
+        <li><strong>From PDFs (Legacy Fallback)</strong>
             <ul>
-                <li>Extract student information from RAPs</li>
-                <li>Look up Canvas IDs for new students</li>
-                <li>Save the information to a course-specific CSV file</li>
+                <li>If RAP data is provided as individual PDF files, click "Update from RAP PDFs"</li>
+                <li>You will be prompted to select the folder containing the PDF files</li>
+                <li>PDFs are parsed for student name, number, and extra time allocation</li>
             </ul>
         </li>
     </ol>
@@ -191,9 +207,9 @@
         <li>
             <div class="highlight">
                 <strong>Quick Action: "Just Do It" Button</strong>
-                <p>For a streamlined workflow, use the <strong>✓ Just Do It!</strong> button to:</p>
+                <p>For a streamlined workflow, use the <strong>&#10003; Just Do It!</strong> button to:</p>
                 <ul>
-                    <li>Update student data from all RAP PDFs in one step</li>
+                    <li>Update student data from the RAP CSV in one step</li>
                     <li>Automatically apply extra time to ALL quizzes in the course</li>
                     <li>Get a summary of actions performed</li>
                 </ul>
@@ -202,7 +218,7 @@
         </li>
         <li>Extra time is calculated proportionally based on:
             <ul>
-                <li>The student's RAP accommodation (e.g., 30 mins per hour)</li>
+                <li>The student's RAP accommodation (e.g., 10 mins per hour)</li>
                 <li>The quiz's time limit</li>
             </ul>
         </li>
@@ -216,10 +232,11 @@
                 <li>Course list is automatically sorted alphabetically</li>
             </ul>
         </li>
-        <li><strong>Course Configuration:</strong>
+        <li><strong>RAP File Management:</strong>
             <ul>
-                <li>Use the "Configure Course" button to set course-specific RAP folders</li>
-                <li>Configure individual courses directly from the main screen</li>
+                <li>Use "Change RAP File..." to select a different RAP CSV file at any time</li>
+                <li>The selected file path is remembered across sessions</li>
+                <li>If the file is not found on startup, you will be prompted to select a new one</li>
             </ul>
         </li>
         <li><strong>Logging:</strong>
@@ -233,7 +250,6 @@
         </li>
         <li><strong>Data Management:</strong>
             <ul>
-                <li>Course-specific RAP folders can be configured via "Manage Courses"</li>
                 <li>Student data is stored in course-specific CSV files</li>
                 <li>Changes are logged for accountability</li>
             </ul>
@@ -244,11 +260,12 @@
     <ul>
         <li><strong>Common Issues:</strong>
             <ul>
-                <li>If a student's RAP isn't being processed:
+                <li>If students aren't being found from the RAP CSV:
                     <ul>
-                        <li>Check that the PDF is readable and contains the required information</li>
-                        <li>Verify the format matches: name in Title Case, surname in UPPERCASE, followed by 7-digit student number</li>
-                        <li>Ensure the extra time specification is in the format "Extra time XX mins per hour"</li>
+                        <li>Check that the CSV file contains the required columns: <code>u_student_id</code>, <code>u_exam_time</code>, <code>u_requested_for1</code></li>
+                        <li>Verify that <code>u_student_id</code> values are in the format "C" followed by a 7-digit number (e.g., "C3472571")</li>
+                        <li>Ensure <code>u_exam_time</code> contains a number for students who need extra time (e.g., "10 mins/hr.")</li>
+                        <li>Students with empty <code>u_exam_time</code> or "No additional time required." are automatically skipped</li>
                     </ul>
                 </li>
                 <li>If Canvas integration isn't working:
@@ -256,6 +273,13 @@
                         <li>Verify your API token hasn't expired</li>
                         <li>Check that students are enrolled in the correct course</li>
                         <li>Ensure you have appropriate permissions in Canvas</li>
+                    </ul>
+                </li>
+                <li>If using legacy PDF processing:
+                    <ul>
+                        <li>Check that the PDF is readable and contains the required information</li>
+                        <li>Verify the format matches: name in Title Case, surname in UPPERCASE, followed by 7-digit student number</li>
+                        <li>Ensure the extra time specification is in the format "Extra time XX mins per hour"</li>
                     </ul>
                 </li>
             </ul>
@@ -269,8 +293,8 @@
         </li>
         <li><strong>File Access:</strong>
             <ul>
-                <li>Ensure you have write permissions for the RAP folders</li>
-                <li>Check that CSV files aren't open in other programs when updating</li>
+                <li>Ensure the RAP CSV file is accessible and not locked by another program</li>
+                <li>Check that course data CSV files aren't open in other programs when updating</li>
                 <li>Verify file paths don't contain special characters</li>
             </ul>
         </li>
@@ -278,7 +302,7 @@
 
     <hr style="margin-top: 40px;">
     <div style="font-size: 0.8em; color: #666; text-align: center; padding: 20px;">
-        © 2024 <a href="https://github.com/florianbreuer" target="_blank">Florian Breuer</a>. RAPydity is free software released under the <a href="https://opensource.org/licenses/MIT" target="_blank">MIT License</a>.
+        &copy; 2024 <a href="https://github.com/florianbreuer" target="_blank">Florian Breuer</a>. RAPydity is free software released under the <a href="https://opensource.org/licenses/MIT" target="_blank">MIT License</a>.
     </div>
 </body>
-</html> 
+</html>
